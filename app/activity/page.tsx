@@ -8,6 +8,10 @@ import { StatusBadge } from '@/components/status-badge'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import type { ActivityEntry, ActivityType, ChannelType } from '@/types'
+import { toZonedTime } from 'date-fns-tz'
+
+const TZ = 'America/Los_Angeles'
+function toPST(date: Date) { return toZonedTime(date, TZ) }
 import {
   Search, X, ChevronLeft, ChevronRight, RefreshCw, Zap,
   ChevronDown, ChevronUp, Terminal, List,
@@ -80,7 +84,7 @@ function ExpandableRow({ entry }: { entry: ActivityEntry }) {
         onClick={() => entry.details && setExpanded(!expanded)}
       >
         <td className="px-3 py-2.5 font-mono text-muted-foreground whitespace-nowrap text-[11px]">
-          {format(new Date(entry.timestamp), 'MMM d HH:mm:ss')}
+          {format(toPST(new Date(entry.timestamp)), 'MMM d HH:mm:ss')}
         </td>
         <td className="px-3 py-2.5">
           <ActivityTypeBadge type={entry.type} />
@@ -183,7 +187,7 @@ function TimelineEntry({ entry, isLast }: { entry: ActivityEntry; isLast: boolea
         <div className="flex items-start gap-2 flex-wrap">
           <ActivityTypeBadge type={entry.type} />
           <span className="text-[10px] font-mono text-muted-foreground/60 mt-1">
-            {format(new Date(entry.timestamp), 'HH:mm:ss')} · {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+            {format(toPST(new Date(entry.timestamp)), 'HH:mm:ss')} · {formatDistanceToNow(toPST(new Date(entry.timestamp)), { addSuffix: true })}
           </span>
           {entry.agentId && (
             <span className="text-[10px] font-mono mt-1 text-primary/70">@{entry.agentId}</span>

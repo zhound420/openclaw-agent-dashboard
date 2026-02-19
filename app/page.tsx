@@ -23,6 +23,10 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
+import { toZonedTime } from 'date-fns-tz'
+
+const TZ = 'America/Los_Angeles'
+function toPST(date: Date) { return toZonedTime(date, TZ) }
 import Link from 'next/link'
 
 function runCLI(cmd: string): Record<string, unknown> | null {
@@ -453,7 +457,7 @@ export default function HomePage() {
                       {String(i + 1).padStart(2, '0')}
                     </span>
                     <span className="text-muted-foreground/50 font-mono text-[10px] shrink-0 mt-px">
-                      {format(new Date(entry.timestamp), 'HH:mm:ss')}
+                      {format(toPST(new Date(entry.timestamp)), 'HH:mm:ss')}
                     </span>
                     <span className={`font-mono text-[10px] font-semibold shrink-0 mt-px ${typeColors[entry.type] ?? 'text-muted-foreground'}`}>
                       {typePrefix[entry.type] ?? `[${entry.type.toUpperCase()}]`}
