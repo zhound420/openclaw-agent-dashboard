@@ -23,8 +23,9 @@ interface SystemData {
   }
   channels: Array<{
     channel: string
+    channelId?: string
     status: string
-    lastPing: string
+    lastPing: string | null
     latencyMs: number
     messagesPerHour: number
   }>
@@ -33,11 +34,13 @@ interface SystemData {
     name: string
     schedule: string
     description: string
-    lastRun: string
-    nextRun: string
+    lastRun: string | null
+    nextRun: string | null
     lastStatus: string
     totalRuns: number
     successRate: number
+    enabled?: boolean
+    consecutiveErrors?: number
   }>
   tokenUsage: Array<{
     date: string
@@ -74,7 +77,8 @@ const channelIcons: Record<string, string> = {
   api: '🔌',
   cron: '⏰',
   web: '🌐',
-  telegram: '📱',
+  telegram: '✈️',
+  imessage: '💬',
 }
 
 const channelStatusColors: Record<string, string> = {
@@ -320,7 +324,8 @@ export default function SystemPage() {
             {(systemData?.channels ?? []).map(ch => {
               const isConnected = ch.status === 'connected'
               const color = channelStatusColors[ch.status] ?? 'oklch(0.45 0.03 265)'
-              const icon = channelIcons[ch.channel] ?? '🔌'
+              const iconKey = ch.channelId ?? ch.channel.toLowerCase()
+              const icon = channelIcons[iconKey] ?? '🔌'
 
               return (
                 <div
@@ -398,7 +403,7 @@ export default function SystemPage() {
                           {job.successRate}%
                         </span>
                         <span className="text-[10px] text-muted-foreground/50 font-mono">
-                          last {formatDistanceToNow(new Date(job.lastRun), { addSuffix: true })}
+                          {job.lastRun ? `last ${formatDistanceToNow(new Date(job.lastRun), { addSuffix: true })}` : 'never run'}
                         </span>
                       </div>
                     </div>

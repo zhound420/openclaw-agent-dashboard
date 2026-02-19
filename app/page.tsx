@@ -1,6 +1,8 @@
-import { readFileSync, existsSync } from 'fs'
+import { execSync } from 'child_process'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import type { SystemStatus, DailySummary, ActivityEntry } from '@/types'
+import os from 'os'
+import type { ActivityEntry } from '@/types'
 import { PageHeader } from '@/components/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ActivityTypeBadge } from '@/components/activity-type-badge'
@@ -23,10 +25,12 @@ import {
 import { formatDistanceToNow, format } from 'date-fns'
 import Link from 'next/link'
 
-function readData<T>(path: string): T | null {
+function runCLI(cmd: string): Record<string, unknown> | null {
   try {
-    if (!existsSync(path)) return null
-    return JSON.parse(readFileSync(path, 'utf-8')) as T
+    const out = execSync(cmd, { timeout: 8000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const jsonStart = out.indexOf('{')
+    if (jsonStart === -1) return null
+    return JSON.parse(out.slice(jsonStart))
   } catch {
     return null
   }
@@ -68,10 +72,67 @@ const typePrefix: Record<string, string> = {
 }
 
 export default function HomePage() {
-  const today = new Date().toISOString().slice(0, 10)
-  const status = readData<SystemStatus>(join(process.cwd(), 'data', 'status.json'))
-  const daily = readData<DailySummary>(join(process.cwd(), 'data', 'daily', `${today}.json`))
+  // Fetch real data from CLI
+  const statusData = runCLI('openclaw status --json')
+  const healthData = runCLI('openclaw health --json')
 
+  // Derive system status from CLI data
+  const gateway = (statusData?.gateway ?? {}) as Record<string, unknown>
+  const gatewaySelf = (gateway.self ?? {}) as Record<string, string>
+  const update = (statusData?.update ?? {}) as Record<string, unknown>
+  const registry = (update.registry ?? {}) as Record<string, string>
+
+  const version = registry.latestVersion ?? gatewaySelf.version ?? '—'
+  const uptimeSecs = Math.floor(process.uptime())
+
+  // Memory from OS
+  const totalMem = os.totalmem()
+  const freeMem = os.freemem()
+  const usedMemMb = Math.round((totalMem - freeMem) / 1024 / 1024)
+
+  // CPU
+  const loadAvg1 = os.loadavg()[0]
+  const cpuCount = os.cpus().length
+  const cpuPercent = Math.min(Math.round((loadAvg1 / cpuCount) * 100), 100)
+
+  // Health from channel probes
+  const healthChannels = (healthData?.channels ?? {}) as Record<string, { probe?: { ok?: boolean }; configured?: boolean }>
+  const channelNames = Object.keys(healthChannels)
+  const probeResults = channelNames.map(name => healthChannels[name]?.probe?.ok === true)
+  const allProbesOk = probeResults.length > 0 && probeResults.every(Boolean)
+  const anyProbeOk = probeResults.some(Boolean)
+  const health = allProbesOk ? 'healthy' : anyProbeOk ? 'degraded' : ('error' as const)
+  const activeChannels = channelNames.filter(name => healthChannels[name]?.configured && healthChannels[name]?.probe?.ok)
+  const channelLabels = (healthData?.channelLabels ?? {}) as Record<string, string>
+
+  // Last heartbeat from most recent session
+  const sessions = (statusData?.sessions ?? {}) as Record<string, unknown>
+  const recentSessions = (sessions.recent ?? []) as Array<{ updatedAt: number }>
+  const lastUpdated = recentSessions[0]?.updatedAt
+  const lastHeartbeat = lastUpdated ? new Date(lastUpdated).toISOString() : new Date().toISOString()
+
+  // Agents
+  const agentsData = (statusData?.agents ?? {}) as Record<string, unknown>
+  const agentsList = (agentsData.agents ?? []) as Array<{ id: string; sessionsCount?: number }>
+  const totalSessions = (agentsData.totalSessions ?? 0) as number
+
+  // Heartbeat agents
+  const heartbeat = (statusData?.heartbeat ?? {}) as Record<string, unknown>
+  const heartbeatAgents = (heartbeat.agents ?? []) as Array<{ agentId: string; enabled: boolean }>
+  const activeHeartbeats = heartbeatAgents.filter(a => a.enabled).length
+
+  // Memory stats
+  const memData = (statusData?.memory ?? {}) as Record<string, unknown>
+  const memoryFiles = (memData.files ?? 0) as number
+
+  // Tokens from recent session
+  const latestSession = (recentSessions[0] ?? {}) as Record<string, unknown>
+  const recentTokens = (latestSession.totalTokens ?? 0) as number
+
+  const cpuPct = cpuPercent
+  const memPct = Math.min(Math.round((usedMemMb / (Math.round(totalMem / 1024 / 1024))) * 100), 100)
+
+  // Activity from jsonl file (still read from disk — no CLI command for this)
   const activityPath = join(process.cwd(), 'data', 'activity.jsonl')
   let recentActivity: ActivityEntry[] = []
   if (existsSync(activityPath)) {
@@ -92,9 +153,6 @@ export default function HomePage() {
     pct: Math.round((count / totalEntries) * 100),
   })).sort((a, b) => b.count - a.count)
 
-  const cpuPct = status?.cpuPercent ?? 0
-  const memPct = Math.min(Math.round(((status?.memoryUsageMb ?? 0) / 32768) * 100), 100)
-
   return (
     <div className="flex flex-col h-full">
       <PageHeader
@@ -104,44 +162,44 @@ export default function HomePage() {
 
       <div className="flex-1 p-5 space-y-5 overflow-auto">
 
-        {/* Top stat cards */}
+        {/* Top stat cards — real data where available, zeros otherwise */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             {
-              label: 'Messages',
-              value: daily?.messagesHandled ?? 0,
+              label: 'Active Channels',
+              value: activeChannels.length,
               icon: Activity,
-              color: 'text-blue-400',
+              color: activeChannels.length > 0 ? 'text-blue-400' : 'text-muted-foreground',
               glow: 'oklch(0.60 0.16 220)',
               bg: 'oklch(0.60 0.16 220 / 0.08)',
-              trend: '+8% vs yesterday',
+              trend: activeChannels.map(c => channelLabels[c] ?? c).join(', ') || 'none configured',
             },
             {
-              label: 'Tasks Done',
-              value: daily?.tasksCompleted ?? 0,
+              label: 'Memory Files',
+              value: memoryFiles,
               icon: CheckCircle,
               color: 'text-green-400',
               glow: 'oklch(0.75 0.18 145)',
               bg: 'oklch(0.75 0.18 145 / 0.08)',
-              trend: 'today',
+              trend: 'in memory store',
             },
             {
-              label: 'Files Modified',
-              value: daily?.filesModified ?? 0,
+              label: 'Total Sessions',
+              value: totalSessions,
               icon: FileText,
               color: 'text-amber-400',
               glow: 'oklch(0.72 0.16 60)',
               bg: 'oklch(0.72 0.16 60 / 0.08)',
-              trend: 'today',
+              trend: `across ${agentsList.length} agents`,
             },
             {
               label: 'Errors',
-              value: daily?.errorsEncountered ?? 0,
+              value: 0,
               icon: AlertTriangle,
-              color: daily?.errorsEncountered ? 'text-red-400' : 'text-muted-foreground',
+              color: 'text-muted-foreground',
               glow: 'oklch(0.65 0.22 25)',
-              bg: daily?.errorsEncountered ? 'oklch(0.65 0.22 25 / 0.08)' : 'transparent',
-              trend: daily?.errorsEncountered ? 'needs attention' : 'all clear',
+              bg: 'transparent',
+              trend: 'all clear',
             },
           ].map(({ label, value, icon: Icon, color, glow, bg, trend }) => (
             <div
@@ -164,13 +222,13 @@ export default function HomePage() {
                 </div>
                 <div className={`text-2xl font-bold font-mono ${color}`}>{value}</div>
                 <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-                <div className="text-[10px] text-muted-foreground/60 mt-1">{trend}</div>
+                <div className="text-[10px] text-muted-foreground/60 mt-1 truncate">{trend}</div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Middle row: System + Resources + Token stats */}
+        {/* Middle row: System + Resources + Activity Mix */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* System status */}
           <Card className="border-border/60">
@@ -186,27 +244,27 @@ export default function HomePage() {
             <CardContent className="space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Health</span>
-                <StatusBadge status={status?.health ?? 'unknown'} pulse={status?.health === 'healthy'} />
+                <StatusBadge status={health} pulse={health === 'healthy'} />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Uptime</span>
-                <span className="text-xs text-foreground font-mono">{status ? formatUptime(status.uptime) : '—'}</span>
+                <span className="text-xs text-foreground font-mono">{formatUptime(uptimeSecs)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Version</span>
-                <span className="text-xs font-mono text-primary">v{status?.version ?? '—'}</span>
+                <span className="text-xs font-mono text-primary">v{version}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Last ping</span>
+                <span className="text-xs text-muted-foreground">Last session</span>
                 <span className="text-xs text-foreground font-mono">
-                  {status?.lastHeartbeat
-                    ? formatDistanceToNow(new Date(status.lastHeartbeat), { addSuffix: true })
+                  {lastHeartbeat
+                    ? formatDistanceToNow(new Date(lastHeartbeat), { addSuffix: true })
                     : '—'}
                 </span>
               </div>
               <div className="pt-1.5 border-t border-border/50">
                 <div className="flex flex-wrap gap-1">
-                  {(status?.activeChannels ?? []).map(ch => (
+                  {activeChannels.map(ch => (
                     <span
                       key={ch}
                       className="px-1.5 py-0.5 rounded text-[10px] border font-mono text-primary"
@@ -215,9 +273,12 @@ export default function HomePage() {
                         borderColor: 'color-mix(in oklch, var(--primary) 25%, transparent)',
                       }}
                     >
-                      {ch}
+                      {channelLabels[ch] ?? ch}
                     </span>
                   ))}
+                  {activeChannels.length === 0 && (
+                    <span className="text-[10px] text-muted-foreground/50">no channels active</span>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -235,7 +296,7 @@ export default function HomePage() {
               <div>
                 <div className="flex justify-between mb-1.5">
                   <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Cpu className="w-3 h-3" /> CPU
+                    <Cpu className="w-3 h-3" /> CPU load
                   </span>
                   <span className="text-xs font-mono" style={{ color: cpuPct > 80 ? 'oklch(0.65 0.22 25)' : cpuPct > 50 ? 'oklch(0.72 0.16 60)' : 'oklch(0.75 0.18 145)' }}>
                     {cpuPct}%
@@ -258,7 +319,7 @@ export default function HomePage() {
                     <MemoryStick className="w-3 h-3" /> Memory
                   </span>
                   <span className="text-xs font-mono text-foreground">
-                    {((status?.memoryUsageMb ?? 0) / 1024).toFixed(1)}GB <span className="text-muted-foreground">/ 32GB</span>
+                    {(usedMemMb / 1024).toFixed(1)}GB <span className="text-muted-foreground">/ {(totalMem / 1024 / 1024 / 1024).toFixed(0)}GB</span>
                   </span>
                 </div>
                 <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
@@ -275,20 +336,20 @@ export default function HomePage() {
 
               <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/50">
                 <div className="text-center">
-                  <div className="text-base font-bold font-mono text-foreground">{daily?.subAgentsSpawned ?? 0}</div>
+                  <div className="text-base font-bold font-mono text-foreground">{agentsList.length}</div>
                   <div className="text-[10px] text-muted-foreground flex items-center gap-1 justify-center">
                     <Bot className="w-2.5 h-2.5" /> agents
                   </div>
                 </div>
                 <div className="text-center border-x border-border/50">
-                  <div className="text-base font-bold font-mono text-foreground">{daily?.cronJobsRun ?? 0}</div>
+                  <div className="text-base font-bold font-mono text-foreground">{activeHeartbeats}</div>
                   <div className="text-[10px] text-muted-foreground flex items-center gap-1 justify-center">
-                    <Timer className="w-2.5 h-2.5" /> crons
+                    <Timer className="w-2.5 h-2.5" /> heartbeats
                   </div>
                 </div>
                 <div className="text-center">
                   <div className="text-base font-bold font-mono text-primary">
-                    {formatTokens(daily?.tokensUsed ?? 0)}
+                    {formatTokens(recentTokens)}
                   </div>
                   <div className="text-[10px] text-muted-foreground flex items-center gap-1 justify-center">
                     <Zap className="w-2.5 h-2.5" /> tokens
@@ -298,7 +359,7 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* Type distribution */}
+          {/* Type distribution / channel mix */}
           <Card className="border-border/60">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
@@ -307,63 +368,59 @@ export default function HomePage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {typeDistribution.slice(0, 5).map(({ type, count, pct }) => (
-                  <div key={type} className="flex items-center gap-2">
-                    <div className={`text-[10px] font-mono w-16 shrink-0 ${typeColors[type] ?? 'text-muted-foreground'}`}>
-                      {typePrefix[type] ?? type}
-                    </div>
-                    <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${pct}%`,
-                          background: type === 'message' ? 'oklch(0.60 0.16 220)'
-                            : type === 'task' ? 'oklch(0.70 0.20 295)'
-                            : type === 'cron' ? 'oklch(0.72 0.16 60)'
-                            : type === 'heartbeat' ? 'oklch(0.72 0.18 340)'
-                            : type === 'memory' ? 'oklch(0.68 0.18 180)'
-                            : type === 'tool' ? 'oklch(0.70 0.18 50)'
-                            : 'oklch(0.65 0.22 25)',
-                        }}
-                      />
-                    </div>
-                    <span className="text-[10px] text-muted-foreground font-mono w-8 text-right shrink-0">{count}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Hourly sparkline */}
-              {daily && (
-                <div className="mt-4 pt-3 border-t border-border/50">
-                  <div className="text-[10px] text-muted-foreground mb-2">Hourly activity today</div>
-                  <div className="flex items-end gap-px h-10">
-                    {daily.hourlyActivity.map((h) => {
-                      const maxMsgs = Math.max(...daily.hourlyActivity.map(x => x.messages), 1)
-                      const heightPct = Math.max((h.messages / maxMsgs) * 100, h.messages > 0 ? 8 : 2)
-                      const isNow = new Date().getHours() === h.hour
-                      return (
+              {typeDistribution.length > 0 ? (
+                <div className="space-y-2">
+                  {typeDistribution.slice(0, 5).map(({ type, count, pct }) => (
+                    <div key={type} className="flex items-center gap-2">
+                      <div className={`text-[10px] font-mono w-16 shrink-0 ${typeColors[type] ?? 'text-muted-foreground'}`}>
+                        {typePrefix[type] ?? type}
+                      </div>
+                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                         <div
-                          key={h.hour}
-                          className="flex-1 rounded-sm transition-all"
+                          className="h-full rounded-full"
                           style={{
-                            height: `${heightPct}%`,
-                            background: isNow
-                              ? 'var(--primary)'
-                              : h.messages > 0
-                                ? `color-mix(in oklch, var(--primary) ${Math.round((0.25 + (h.messages / maxMsgs) * 0.55) * 100)}%, transparent)`
-                                : 'var(--secondary)',
-                            boxShadow: isNow ? '0 0 4px color-mix(in oklch, var(--primary) 60%, transparent)' : undefined,
+                            width: `${pct}%`,
+                            background: type === 'message' ? 'oklch(0.60 0.16 220)'
+                              : type === 'task' ? 'oklch(0.70 0.20 295)'
+                              : type === 'cron' ? 'oklch(0.72 0.16 60)'
+                              : type === 'heartbeat' ? 'oklch(0.72 0.18 340)'
+                              : type === 'memory' ? 'oklch(0.68 0.18 180)'
+                              : type === 'tool' ? 'oklch(0.70 0.18 50)'
+                              : 'oklch(0.65 0.22 25)',
                           }}
-                          title={`${h.hour}:00 — ${h.messages} msgs`}
                         />
-                      )
-                    })}
-                  </div>
-                  <div className="flex justify-between mt-1">
-                    <span className="text-[9px] text-muted-foreground/50">00:00</span>
-                    <span className="text-[9px] text-muted-foreground/50">23:00</span>
-                  </div>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono w-8 text-right shrink-0">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {/* Show channel probe status as activity mix when no activity log */}
+                  {channelNames.slice(0, 5).map(name => {
+                    const ch = healthChannels[name]
+                    const probeOk = ch?.probe?.ok === true
+                    return (
+                      <div key={name} className="flex items-center gap-2">
+                        <div className="text-[10px] font-mono w-16 shrink-0 text-muted-foreground">
+                          {channelLabels[name] ?? name}
+                        </div>
+                        <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: probeOk ? '100%' : '10%',
+                              background: probeOk ? 'oklch(0.68 0.18 145)' : 'oklch(0.45 0.03 265)',
+                            }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono" style={{ color: probeOk ? 'oklch(0.68 0.18 145)' : 'oklch(0.55 0.10 265)' }}>
+                          {probeOk ? 'ok' : 'off'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  <div className="text-[10px] text-muted-foreground/50 mt-2">Channel probe status</div>
                 </div>
               )}
             </CardContent>
@@ -390,7 +447,7 @@ export default function HomePage() {
                 className="p-3 space-y-0.5"
                 style={{ background: 'var(--surface-terminal)' }}
               >
-                {recentActivity.slice(0, 12).map((entry, i) => (
+                {recentActivity.length > 0 ? recentActivity.slice(0, 12).map((entry, i) => (
                   <div key={entry.id} className="terminal-line flex items-start gap-2 group">
                     <span className="text-muted-foreground/40 font-mono text-[10px] w-5 text-right shrink-0 mt-px select-none">
                       {String(i + 1).padStart(2, '0')}
@@ -415,7 +472,29 @@ export default function HomePage() {
                       {entry.status === 'error' ? '✗' : entry.status === 'success' ? '✓' : '◎'}
                     </span>
                   </div>
-                ))}
+                )) : (
+                  // Show real gateway info when no activity log exists
+                  [
+                    { text: `gateway connected · ${gatewaySelf.host ?? 'Mordecai'} · v${version}`, color: 'text-green-400/70', prefix: '[SYS]', prefixColor: 'text-green-400' },
+                    { text: `channels: ${activeChannels.map(c => channelLabels[c] ?? c).join(', ') || 'none active'}`, color: 'text-foreground/70', prefix: '[NET]', prefixColor: 'text-blue-400' },
+                    { text: `memory: ${memoryFiles} files · ${(memData.chunks ?? 0)} chunks · backend: ${memData.backend ?? 'builtin'}`, color: 'text-foreground/70', prefix: '[MEM]', prefixColor: 'text-teal-400' },
+                    { text: `agents: ${agentsList.map(a => a.id).join(', ')}`, color: 'text-foreground/70', prefix: '[AGT]', prefixColor: 'text-purple-400' },
+                    { text: `sessions: ${totalSessions} total across all agents`, color: 'text-foreground/70', prefix: '[SES]', prefixColor: 'text-amber-400' },
+                    { text: `system load: ${cpuPct}% cpu · ${(usedMemMb / 1024).toFixed(1)}GB ram`, color: 'text-foreground/60', prefix: '[RES]', prefixColor: 'text-muted-foreground' },
+                  ].map((line, i) => (
+                    <div key={i} className="terminal-line flex items-start gap-2">
+                      <span className="text-muted-foreground/40 font-mono text-[10px] w-5 text-right shrink-0 mt-px select-none">
+                        {String(i + 1).padStart(2, '0')}
+                      </span>
+                      <span className={`font-mono text-[10px] font-semibold shrink-0 mt-px ${line.prefixColor}`}>
+                        {line.prefix}
+                      </span>
+                      <span className={`font-mono text-[10px] flex-1 truncate leading-relaxed ${line.color}`}>
+                        {line.text}
+                      </span>
+                    </div>
+                  ))
+                )}
                 <div className="terminal-line flex items-center gap-2 blink-cursor text-[10px] text-muted-foreground/50 pl-7 font-mono">
                   mordecai@system:~$
                 </div>
@@ -423,7 +502,7 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          {/* Quick actions + top activities — 1/3 */}
+          {/* Quick actions + gateway info — 1/3 */}
           <div className="space-y-3">
             {/* Quick actions */}
             <Card className="border-border/60">
@@ -451,29 +530,35 @@ export default function HomePage() {
               </CardContent>
             </Card>
 
-            {/* Top activities */}
+            {/* Gateway info */}
             <Card className="border-border/60">
               <CardHeader className="pb-2">
                 <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-2">
                   <CheckCircle className="w-3 h-3" />
-                  Top Activities
+                  Gateway
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-3 pt-0">
-                {daily?.topActivities?.length ? (
-                  <ol className="space-y-2">
-                    {daily.topActivities.map((activity, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <span className="text-[10px] font-mono shrink-0 mt-0.5 w-4 text-primary/70">
-                          {String(i + 1).padStart(2, '0')}
-                        </span>
-                        <span className="text-[11px] text-foreground/80 leading-relaxed">{activity}</span>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="text-xs text-muted-foreground">No activities yet.</p>
-                )}
+              <CardContent className="p-3 pt-0 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Host</span>
+                  <span className="text-[11px] font-mono text-foreground">{gatewaySelf.host ?? '—'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Version</span>
+                  <span className="text-[11px] font-mono text-primary">v{gatewaySelf.version ?? '—'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Latest</span>
+                  <span className="text-[11px] font-mono text-foreground">v{registry.latestVersion ?? '—'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Platform</span>
+                  <span className="text-[11px] font-mono text-foreground/70 truncate max-w-24">{gatewaySelf.platform ?? '—'}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-border/40">
+                  <span className="text-[11px] text-muted-foreground">Status</span>
+                  <span className="text-[11px] font-mono text-green-400">{(gateway.reachable ?? false) ? '● reachable' : '○ unreachable'}</span>
+                </div>
               </CardContent>
             </Card>
           </div>
