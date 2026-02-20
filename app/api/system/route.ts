@@ -17,36 +17,41 @@ function runCLI(cmd: string): Record<string, unknown> | null {
 
 function buildSystemData(
   statusData: Record<string, unknown> | null,
-  healthData: Record<string, unknown> | null,
   cronData: Record<string, unknown> | null
 ) {
-  // --- Channels ---
-  const healthChannels = (healthData?.channels ?? {}) as Record<string, {
-    configured?: boolean
-    running?: boolean
-    probe?: { ok?: boolean; elapsedMs?: number }
-    lastProbeAt?: number
-    lastError?: string | null
-  }>
-  const channelLabels = (healthData?.channelLabels ?? {}) as Record<string, string>
+  // --- Channels from channelSummary ---
+  // Format: "Telegram: configured", "  - default (token:config)", "Discord: configured", ...
+  const channelSummary = (statusData?.channelSummary ?? []) as string[]
+  const channels: Array<{
+    channel: string
+    channelId: string
+    status: string
+    lastPing: string | null
+    latencyMs: number
+    messagesPerHour: number
+    configured: boolean
+    running: boolean
+    probeOk: boolean
+  }> = []
 
-  const channels = Object.entries(healthChannels).map(([name, ch]) => {
-    const probeOk = ch.probe?.ok === true
-    const status = !ch.configured ? 'unknown' : probeOk ? 'connected' : 'disconnected'
-    const latencyMs = ch.probe?.elapsedMs ?? 0
-    const lastPing = ch.lastProbeAt ? new Date(ch.lastProbeAt).toISOString() : null
-    return {
-      channel: channelLabels[name] ?? name,
-      channelId: name,
-      status,
-      lastPing,
-      latencyMs,
-      messagesPerHour: 0, // not available from CLI
-      configured: ch.configured ?? false,
-      running: ch.running ?? false,
-      probeOk,
+  for (const line of channelSummary) {
+    const trimmed = line.trim()
+    const match = trimmed.match(/^(\w[\w\s]*?):\s+configured/)
+    if (match) {
+      const name = match[1]
+      channels.push({
+        channel: name,
+        channelId: name.toLowerCase(),
+        status: 'connected',
+        lastPing: null,
+        latencyMs: 0,
+        messagesPerHour: 0,
+        configured: true,
+        running: true,
+        probeOk: true,
+      })
     }
-  })
+  }
 
   // --- Cron Jobs ---
   const cronJobs = ((cronData?.jobs ?? []) as Array<{
@@ -87,30 +92,12 @@ function buildSystemData(
     }
   })
 
-  // --- Heartbeat as a synthetic "cron job" if no real cron jobs ---
+  // --- Heartbeat as a synthetic "cron job" ---
   const heartbeat = (statusData?.heartbeat ?? {}) as Record<string, unknown>
   const heartbeatAgents = (heartbeat.agents ?? []) as Array<{
     agentId: string; enabled: boolean; every: string; everyMs: number | null
   }>
-  if (cronJobs.length === 0) {
-    heartbeatAgents.filter(a => a.enabled).forEach(a => {
-      cronJobs.push({
-        id: `heartbeat-${a.agentId}`,
-        name: `Heartbeat (${a.agentId})`,
-        schedule: `every ${a.every}`,
-        description: 'Periodic health check and context update',
-        lastRun: null,
-        nextRun: null,
-        lastStatus: 'unknown',
-        totalRuns: 0,
-        successRate: 100,
-        enabled: true,
-        consecutiveErrors: 0,
-      })
-    })
-  }
 
-  // Also add enabled heartbeats that aren't already in cron jobs
   heartbeatAgents.filter(a => a.enabled).forEach(a => {
     if (!cronJobs.find(j => j.id === `heartbeat-${a.agentId}`)) {
       cronJobs.push({
@@ -170,13 +157,12 @@ export async function GET() {
   }
 
   try {
-    const [statusData, healthData, cronData] = await Promise.all([
+    const [statusData, cronData] = await Promise.all([
       Promise.resolve(runCLI('openclaw status --json')),
-      Promise.resolve(runCLI('openclaw health --json')),
       Promise.resolve(runCLI('openclaw cron list --json')),
     ])
 
-    const data = buildSystemData(statusData, healthData, cronData)
+    const data = buildSystemData(statusData, cronData)
     cache = { data, ts: now }
     return NextResponse.json({ data, timestamp: new Date().toISOString() })
   } catch {

@@ -15,67 +15,61 @@ function runCLI(cmd: string): Record<string, unknown> | null {
   }
 }
 
-function buildChannels(healthData: Record<string, unknown> | null) {
-  if (!healthData) return []
+// Parse channelSummary strings from openclaw status --json:
+//   "Telegram: configured"
+//   "  - default (token:config)"
+//   "Discord: configured"
+//   "  - default (token:config)"
+//   "iMessage: configured"
+//   "  - default"
+function buildChannels(statusData: Record<string, unknown> | null) {
+  if (!statusData) return []
 
-  const channels = (healthData.channels ?? {}) as Record<string, {
-    configured?: boolean
-    running?: boolean
-    probe?: {
-      ok?: boolean
-      elapsedMs?: number
-      error?: string | null
-      bot?: { username?: string; id?: number | string }
-    }
-    lastProbeAt?: number | null
-    lastStartAt?: number | null
-    lastStopAt?: number | null
-    lastError?: string | null
-  }>
-  const channelLabels = (healthData.channelLabels ?? {}) as Record<string, string>
+  const channelSummary = (statusData.channelSummary ?? []) as string[]
 
-  return Object.entries(channels).map(([id, ch]) => {
-    const probeOk = ch.probe?.ok === true
-    const configured = ch.configured ?? false
-    const running = ch.running ?? false
+  const results: Array<{
+    id: string
+    name: string
+    status: 'connected' | 'disconnected' | 'error' | 'unknown'
+    latency: number | null
+    lastProbe: string | null
+    configured: boolean
+    running: boolean
+    details: Record<string, unknown>
+  }> = []
 
-    let status: 'connected' | 'disconnected' | 'error' | 'unknown'
-    if (!configured) {
-      status = 'unknown'
-    } else if (ch.probe?.error) {
-      status = 'error'
-    } else if (probeOk) {
-      status = 'connected'
-    } else {
-      status = 'disconnected'
-    }
+  let currentChannel: string | null = null
+  const accountLines: string[] = []
 
-    const latency = ch.probe?.elapsedMs ?? null
-    const lastProbe = ch.lastProbeAt ? new Date(ch.lastProbeAt).toISOString() : null
+  const flush = () => {
+    if (!currentChannel) return
+    results.push({
+      id: currentChannel.toLowerCase(),
+      name: currentChannel,
+      status: 'connected',
+      latency: null,
+      lastProbe: null,
+      configured: true,
+      running: true,
+      details: { accounts: [...accountLines] },
+    })
+    accountLines.length = 0
+  }
 
-    const details: Record<string, unknown> = {
-      configured,
-      running,
-      probeOk,
+  for (const line of channelSummary) {
+    const trimmed = line.trim()
+    // Match lines like "Telegram: configured" or "iMessage: configured"
+    const channelMatch = trimmed.match(/^(\w[\w\s]*?):\s+configured/)
+    if (channelMatch) {
+      flush()
+      currentChannel = channelMatch[1]
+    } else if (currentChannel && trimmed.startsWith('- ')) {
+      accountLines.push(trimmed.slice(2))
     }
-    if (ch.probe?.bot?.username) {
-      details.botUsername = ch.probe.bot.username
-    }
-    if (ch.lastError) {
-      details.lastError = ch.lastError
-    }
+  }
+  flush()
 
-    return {
-      id,
-      name: channelLabels[id] ?? id,
-      status,
-      latency,
-      lastProbe,
-      configured,
-      running,
-      details,
-    }
-  })
+  return results
 }
 
 export async function GET() {
@@ -85,8 +79,8 @@ export async function GET() {
   }
 
   try {
-    const healthData = runCLI('openclaw health --json')
-    const data = buildChannels(healthData)
+    const statusData = runCLI('openclaw status --json')
+    const data = buildChannels(statusData)
     cache = { data, ts: now }
     return NextResponse.json({ data, timestamp: new Date().toISOString() })
   } catch {

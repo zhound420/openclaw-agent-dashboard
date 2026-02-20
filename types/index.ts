@@ -1,7 +1,7 @@
 // Activity types
 export type ActivityType = 'message' | 'task' | 'cron' | 'heartbeat' | 'memory' | 'tool' | 'error'
 export type ActivityStatus = 'success' | 'error' | 'pending' | 'running'
-export type ChannelType = 'slack' | 'discord' | 'terminal' | 'api' | 'cron' | 'web'
+export type ChannelType = 'slack' | 'discord' | 'telegram' | 'imessage' | 'signal' | 'terminal' | 'api' | 'cron' | 'web'
 
 export interface ActivityEntry {
   id: string

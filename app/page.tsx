@@ -76,7 +76,6 @@ const typePrefix: Record<string, string> = {
 export default function HomePage() {
   // Fetch real data from CLI
   const statusData = runCLI('openclaw status --json')
-  const healthData = runCLI('openclaw health --json')
 
   // Derive system status from CLI data
   const gateway = (statusData?.gateway ?? {}) as Record<string, unknown>
@@ -97,15 +96,20 @@ export default function HomePage() {
   const cpuCount = os.cpus().length
   const cpuPercent = Math.min(Math.round((loadAvg1 / cpuCount) * 100), 100)
 
-  // Health from channel probes
-  const healthChannels = (healthData?.channels ?? {}) as Record<string, { probe?: { ok?: boolean }; configured?: boolean }>
-  const channelNames = Object.keys(healthChannels)
-  const probeResults = channelNames.map(name => healthChannels[name]?.probe?.ok === true)
-  const allProbesOk = probeResults.length > 0 && probeResults.every(Boolean)
-  const anyProbeOk = probeResults.some(Boolean)
-  const health = allProbesOk ? 'healthy' : anyProbeOk ? 'degraded' : ('error' as const)
-  const activeChannels = channelNames.filter(name => healthChannels[name]?.configured && healthChannels[name]?.probe?.ok)
-  const channelLabels = (healthData?.channelLabels ?? {}) as Record<string, string>
+  // Health from channelSummary in status
+  const channelSummary = (statusData?.channelSummary ?? []) as string[]
+  const activeChannels: string[] = []
+  const channelLabels: Record<string, string> = {}
+  for (const line of channelSummary) {
+    const match = line.match(/^(\w+):\s*configured/)
+    if (match) {
+      const id = match[1].toLowerCase()
+      activeChannels.push(id)
+      channelLabels[id] = match[1]
+    }
+  }
+  const gatewayReachable = (gateway.reachable ?? false) as boolean
+  const health = gatewayReachable && activeChannels.length > 0 ? 'healthy' : gatewayReachable ? 'degraded' : ('error' as const)
 
   // Last heartbeat from most recent session
   const sessions = (statusData?.sessions ?? {}) as Record<string, unknown>
@@ -457,25 +461,23 @@ export default function HomePage() {
               ) : (
                 <div className="space-y-2">
                   {/* Show channel probe status as activity mix when no activity log */}
-                  {channelNames.slice(0, 5).map(name => {
-                    const ch = healthChannels[name]
-                    const probeOk = ch?.probe?.ok === true
+                  {activeChannels.slice(0, 5).map(id => {
                     return (
-                      <div key={name} className="flex items-center gap-2">
+                      <div key={id} className="flex items-center gap-2">
                         <div className="text-[10px] font-mono w-16 shrink-0 text-muted-foreground">
-                          {channelLabels[name] ?? name}
+                          {channelLabels[id] ?? id}
                         </div>
                         <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                           <div
                             className="h-full rounded-full"
                             style={{
-                              width: probeOk ? '100%' : '10%',
-                              background: probeOk ? 'oklch(0.68 0.18 145)' : 'oklch(0.45 0.03 265)',
+                              width: '100%',
+                              background: 'oklch(0.68 0.18 145)',
                             }}
                           />
                         </div>
-                        <span className="text-[10px] font-mono" style={{ color: probeOk ? 'oklch(0.68 0.18 145)' : 'oklch(0.55 0.10 265)' }}>
-                          {probeOk ? 'ok' : 'off'}
+                        <span className="text-[10px] font-mono" style={{ color: 'oklch(0.68 0.18 145)' }}>
+                          ok
                         </span>
                       </div>
                     )

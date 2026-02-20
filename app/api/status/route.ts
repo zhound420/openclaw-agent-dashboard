@@ -18,25 +18,18 @@ function runCLI(cmd: string): object | null {
   }
 }
 
-function deriveHealth(health: ReturnType<typeof parseHealth>): 'healthy' | 'degraded' | 'unhealthy' {
-  if (health.allProbesOk) return 'healthy'
-  if (health.anyProbeOk) return 'degraded'
-  return 'unhealthy'
+// Parse channelSummary strings like:
+//   "Telegram: configured"
+//   "  - default (token:config)"
+//   "Discord: configured"
+//   "iMessage: configured"
+function parseChannelSummary(channelSummary: string[]): string[] {
+  return channelSummary
+    .filter(line => /^\w[\w\s]*?:\s+configured/.test(line.trim()))
+    .map(line => line.split(':')[0].trim().toLowerCase())
 }
 
-function parseHealth(healthData: Record<string, unknown> | null) {
-  if (!healthData) return { allProbesOk: false, anyProbeOk: false, channels: [] as string[] }
-  const channels = (healthData.channels ?? {}) as Record<string, { probe?: { ok?: boolean }; configured?: boolean }>
-  const channelNames = Object.keys(channels)
-  const probeResults = channelNames.map(name => channels[name]?.probe?.ok === true)
-  const allProbesOk = probeResults.length > 0 && probeResults.every(Boolean)
-  const anyProbeOk = probeResults.some(Boolean)
-  const configuredAndProbeOk = channelNames.filter(name => channels[name]?.configured && channels[name]?.probe?.ok)
-  return { allProbesOk, anyProbeOk, channels: configuredAndProbeOk }
-}
-
-function buildStatus(statusData: Record<string, unknown> | null, healthData: Record<string, unknown> | null) {
-  const health = parseHealth(healthData)
+function buildStatus(statusData: Record<string, unknown> | null) {
   const gateway = (statusData?.gateway ?? {}) as Record<string, unknown>
   const gatewaySelf = (gateway.self ?? {}) as Record<string, unknown>
   const update = (statusData?.update ?? {}) as Record<string, unknown>
@@ -47,18 +40,29 @@ function buildStatus(statusData: Record<string, unknown> | null, healthData: Rec
   const sessions = (statusData?.sessions ?? {}) as Record<string, unknown>
   const heartbeat = (statusData?.heartbeat ?? {}) as Record<string, unknown>
   const heartbeatAgents = (heartbeat.agents ?? []) as Array<{ agentId: string; enabled: boolean; every: string }>
+  const channelSummary = (statusData?.channelSummary ?? []) as string[]
 
-  // Determine version: use registry latest, fall back to gateway self version
-  const version = (registry.latestVersion ?? gatewaySelf.version ?? '—') as string
+  // Version: prefer gateway self version, fall back to registry latest
+  const version = (gatewaySelf.version ?? registry.latestVersion ?? '—') as string
 
-  // Uptime: parse from gatewayService runtime text or fall back to process uptime
-  let uptimeSecs = Math.floor(process.uptime())
-  const runtimeText = (gatewayService.runtimeShort ?? '') as string
-  const pidMatch = runtimeText.match(/pid\s+(\d+)/)
-  if (!pidMatch) {
-    // Can't parse pid start — use process uptime as proxy
-    uptimeSecs = Math.floor(process.uptime())
+  // Gateway reachable directly from status
+  const gatewayReachable = (gateway.reachable ?? false) as boolean
+
+  // Active channels parsed from channelSummary strings
+  const activeChannels = parseChannelSummary(channelSummary)
+
+  // Health: healthy if gateway reachable AND channels configured, degraded if reachable but no channels
+  let health: 'healthy' | 'degraded' | 'unhealthy'
+  if (!gatewayReachable) {
+    health = 'unhealthy'
+  } else if (activeChannels.length > 0) {
+    health = 'healthy'
+  } else {
+    health = 'degraded'
   }
+
+  // Uptime: use process uptime as proxy
+  const uptimeSecs = Math.floor(process.uptime())
 
   // Memory: from OS
   const totalMem = os.totalmem()
@@ -70,10 +74,7 @@ function buildStatus(statusData: Record<string, unknown> | null, healthData: Rec
   const cpuCount = os.cpus().length
   const cpuPercent = Math.min(Math.round((loadAvg1 / cpuCount) * 100), 100)
 
-  // Active channels from health probe
-  const activeChannels = health.channels
-
-  // Last heartbeat: find the most recent heartbeat session
+  // Last heartbeat: find the most recent session
   const recentSessions = (sessions.recent ?? []) as Array<{ key: string; updatedAt: number }>
   const lastUpdated = recentSessions[0]?.updatedAt
   const lastHeartbeat = lastUpdated ? new Date(lastUpdated).toISOString() : new Date().toISOString()
@@ -85,7 +86,7 @@ function buildStatus(statusData: Record<string, unknown> | null, healthData: Rec
   return {
     version,
     uptime: uptimeSecs,
-    health: deriveHealth(health),
+    health,
     activeChannels,
     lastHeartbeat,
     memoryUsageMb: usedMemMb,
@@ -97,7 +98,7 @@ function buildStatus(statusData: Record<string, unknown> | null, healthData: Rec
     platform: (osData.label ?? os.platform()) as string,
     heartbeatEvery,
     gatewayVersion: (gatewaySelf.version ?? '—') as string,
-    gatewayReachable: (gateway.reachable ?? false) as boolean,
+    gatewayReachable,
   }
 }
 
@@ -108,15 +109,8 @@ export async function GET() {
   }
 
   try {
-    const [statusData, healthData] = await Promise.all([
-      Promise.resolve(runCLI('openclaw status --json')),
-      Promise.resolve(runCLI('openclaw health --json')),
-    ])
-
-    const data = buildStatus(
-      statusData as Record<string, unknown> | null,
-      healthData as Record<string, unknown> | null
-    )
+    const statusData = runCLI('openclaw status --json') as Record<string, unknown> | null
+    const data = buildStatus(statusData)
     cache = { data, ts: now }
     return NextResponse.json({ data, timestamp: new Date().toISOString() })
   } catch {
