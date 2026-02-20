@@ -249,13 +249,19 @@ export default function SystemPage() {
   const [systemData, setSystemData] = useState<SystemData | null>(null)
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/status').then(r => r.json()),
-      fetch('/api/system').then(r => r.json()),
-    ]).then(([statusRes, systemRes]) => {
-      setStatus(statusRes.data)
-      setSystemData(systemRes.data)
-    }).catch(() => {})
+    async function fetchAll() {
+      try {
+        const [statusRes, systemRes] = await Promise.all([
+          fetch('/api/status').then(r => r.json()),
+          fetch('/api/system').then(r => r.json()),
+        ])
+        setStatus(statusRes.data)
+        setSystemData(systemRes.data)
+      } catch {}
+    }
+    fetchAll()
+    const interval = setInterval(fetchAll, 3000)
+    return () => clearInterval(interval)
   }, [])
 
   const isHealthy = status?.health === 'healthy'

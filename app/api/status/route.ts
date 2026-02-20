@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { execSync } from 'child_process'
 import os from 'os'
 
-// Simple in-process cache: 30 second TTL
+// Simple in-process cache: 3 second TTL
 let cache: { data: object; ts: number } | null = null
-const CACHE_TTL = 30_000
+const CACHE_TTL = 3_000
 
 function runCLI(cmd: string): object | null {
   try {
@@ -90,6 +90,7 @@ function buildStatus(statusData: Record<string, unknown> | null) {
     activeChannels,
     lastHeartbeat,
     memoryUsageMb: usedMemMb,
+    totalMemMb: Math.round(totalMem / 1024 / 1024),
     cpuPercent,
     // Extra real fields for the system page
     memoryFiles: (memData.files ?? 0) as number,

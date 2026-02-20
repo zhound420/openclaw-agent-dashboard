@@ -6,7 +6,7 @@ import type { ActivityEntry, ActivityType, ChannelType } from '@/types'
 
 let cachedActivity: ActivityEntry[] | null = null
 let cacheTimestamp = 0
-const CACHE_TTL = 30_000
+const CACHE_TTL = 3_000
 
 function execJSON(cmd: string): unknown {
   try {

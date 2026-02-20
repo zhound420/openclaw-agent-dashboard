@@ -145,15 +145,17 @@ export default function SubAgentsPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   useEffect(() => {
-    async function fetchAgents() {
+    async function fetchAgents(initial = false) {
       try {
         const res = await fetch('/api/agents')
         const data = await res.json()
         setAgents(data.data ?? [])
       } catch {}
-      finally { setLoading(false) }
+      finally { if (initial) setLoading(false) }
     }
-    fetchAgents()
+    fetchAgents(true)
+    const interval = setInterval(() => fetchAgents(false), 3000)
+    return () => clearInterval(interval)
   }, [])
 
   const activeAgents = agents.filter(a => a.status === 'active')

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { execSync } from 'child_process'
 
 let cache: { data: object; ts: number } | null = null
-const CACHE_TTL = 60_000 // config changes rarely, 60s cache
+const CACHE_TTL = 3_000
 
 function runCLI(cmd: string): Record<string, unknown> | null {
   try {

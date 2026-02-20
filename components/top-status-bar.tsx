@@ -63,7 +63,7 @@ export function TopStatusBar({ initialStatus }: TopStatusBarProps) {
       } catch {}
     }
     fetchStatus()
-    const interval = setInterval(fetchStatus, 30000)
+    const interval = setInterval(fetchStatus, 3000)
     return () => clearInterval(interval)
   }, [])
 
@@ -201,8 +201,16 @@ export function TopStatusBar({ initialStatus }: TopStatusBarProps) {
             <div className="flex items-center gap-1.5">
               <span>{status.memoryUsageMb}MB</span>
             </div>
+            <div className="w-px h-3 bg-border/50" />
           </>
         )}
+        <div className="flex items-center gap-1" title="Polling every 3s">
+          <div
+            className="w-1.5 h-1.5 rounded-full pulse-dot"
+            style={{ background: 'oklch(0.75 0.18 145)', boxShadow: '0 0 5px oklch(0.75 0.18 145 / 0.8)' }}
+          />
+          <span className="text-[10px] font-mono text-green-400/80 uppercase tracking-wider">live</span>
+        </div>
       </div>
     </div>
   )
