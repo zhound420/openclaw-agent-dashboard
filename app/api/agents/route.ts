@@ -56,7 +56,7 @@ function buildAgents(statusData: Record<string, unknown> | null) {
     const latestSession = agentSessions[0]
 
     const hasRecentActivity = agent.lastActiveAgeMs !== null && agent.lastActiveAgeMs !== undefined
-      && agent.lastActiveAgeMs < 3600_000 // active in the last hour
+      && agent.lastActiveAgeMs < 120_000 // active in the last 2 minutes
     const isRunning = latestSession?.abortedLastRun === false && hasRecentActivity
 
     let status: 'active' | 'idle' | 'offline'
