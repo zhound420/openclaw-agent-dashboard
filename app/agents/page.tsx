@@ -127,8 +127,9 @@ export default function SubAgentsPage() {
 
   const activeAgents = agents.filter(a => a.status === 'active')
   const totalTasks = agents.reduce((sum, a) => sum + a.tasksCompleted, 0)
-  const avgSuccessRate = agents.length > 0
-    ? agents.reduce((sum, a) => sum + a.successRate, 0) / agents.length
+  const agentsWithData = agents.filter(a => a.successRate !== null && a.tasksCompleted > 0)
+  const avgSuccessRate = agentsWithData.length > 0
+    ? agentsWithData.reduce((sum, a) => sum + (a.successRate ?? 0), 0) / agentsWithData.length
     : 0
 
   return (
@@ -230,7 +231,7 @@ export default function SubAgentsPage() {
 
                     {/* Stats row */}
                     <div className="flex items-center gap-3 mb-3">
-                      <SuccessRing rate={agent.successRate} color={colors.primary} />
+                      <SuccessRing rate={agent.successRate ?? 0} color={colors.primary} />
                       <div className="flex-1 space-y-1.5">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] text-muted-foreground">Tasks</span>
@@ -239,7 +240,7 @@ export default function SubAgentsPage() {
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] text-muted-foreground">Last active</span>
                           <span className="text-[11px] font-mono text-muted-foreground">
-                            {formatDistanceToNow(new Date(agent.lastUsed), { addSuffix: true })}
+                            {agent.lastUsed ? formatDistanceToNow(new Date(agent.lastUsed), { addSuffix: true }) : 'never'}
                           </span>
                         </div>
                       </div>

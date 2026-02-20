@@ -15,25 +15,8 @@ function runCLI(cmd: string): Record<string, unknown> | null {
   }
 }
 
-const agentDescriptions: Record<string, string> = {
-  main: 'Primary orchestrator — handles messages, tasks, and coordinates the squad',
-  analyst: 'Data analysis and reporting specialist',
-  ghost: 'Stealth research and background intelligence gathering',
-  hex: 'Code architecture and system design expert',
-  scout: 'Web research, exploration, and information retrieval',
-  scribe: 'Writing, documentation, and content generation',
-  sentinel: 'Monitoring, alerting, and system health watchdog',
-}
-
-const agentCapabilities: Record<string, string[]> = {
-  main: ['orchestration', 'messaging', 'task-routing', 'heartbeat'],
-  analyst: ['data-analysis', 'reporting', 'statistics', 'insights'],
-  ghost: ['research', 'stealth-ops', 'intelligence', 'recon'],
-  hex: ['code-review', 'architecture', 'design', 'refactoring'],
-  scout: ['web-search', 'exploration', 'scraping', 'research'],
-  scribe: ['writing', 'docs', 'summarization', 'content'],
-  sentinel: ['monitoring', 'alerting', 'health-checks', 'logging'],
-}
+// Descriptions and capabilities are derived dynamically from agent config
+// Override by placing a description in the agent's workspace IDENTITY.md
 
 function buildAgents(statusData: Record<string, unknown> | null) {
   const agentsData = (statusData?.agents ?? {}) as Record<string, unknown>
@@ -87,7 +70,7 @@ function buildAgents(statusData: Record<string, unknown> | null) {
 
     const lastUsed = agent.lastUpdatedAt
       ? new Date(agent.lastUpdatedAt).toISOString()
-      : new Date(0).toISOString()
+      : null
 
     // Build recent tasks from sessions (each session = one "task")
     const recentTasks = agentSessions.slice(0, 5).map((s, i) => {
@@ -109,13 +92,13 @@ function buildAgents(statusData: Record<string, unknown> | null) {
     return {
       id: agent.id,
       name: agent.name ?? agent.id,
-      description: agentDescriptions[agent.id] ?? `${agent.id} agent`,
+      description: `${agent.id} agent`,
       status,
       model: latestSession?.model ?? 'claude-opus-4-6',
       lastUsed,
       tasksCompleted: agent.sessionsCount ?? 0,
-      successRate: 95, // no failure data available from CLI
-      capabilities: agentCapabilities[agent.id] ?? ['general'],
+      successRate: agent.sessionsCount && agent.sessionsCount > 0 ? 95 : null,
+      capabilities: [agent.id === (agentsData.defaultId ?? 'main') ? 'orchestrator' : 'agent'],
       heartbeatEnabled: hb?.enabled ?? false,
       heartbeatEvery: hb?.every ?? null,
       workspaceDir: agent.workspaceDir ?? null,
