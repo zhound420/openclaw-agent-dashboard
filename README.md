@@ -1,31 +1,37 @@
 # OpenClaw Agent Dashboard
 
-A generic, reusable monitoring dashboard template for [OpenClaw](https://openclaw.dev) agents. Drop it alongside any OpenClaw agent to get a live view of sessions, activity, memory, sub-agents, cron jobs, and system health — all in one dark-themed UI.
+A reusable monitoring dashboard for OpenClaw agents: sessions, activity, memory, sub-agents, cron, and system health in one UI.
 
 Built with Next.js 16, React 19, Tailwind v4, and shadcn/ui.
 
 ---
 
-## Quick Start
+## What’s improved in this version
+
+- ✅ **Real-data routes fixed** (no hardcoded machine-specific `/Users/...` paths)
+- ✅ **Portable workspace detection** (`OPENCLAW_WORKSPACE` override + sane default)
+- ✅ **Service reliability fix** (systemd user service PATH includes OpenClaw CLI)
+- ✅ **Color/legibility pass**
+  - Softer dark mode
+  - “Paper gray” light mode
+  - Reduced purple intensity and lower glare gradients
+
+---
+
+## Quick start
 
 ```bash
-# 1. Clone the template
-git clone https://github.com/your-org/openclaw-agent-dashboard
-cd openclaw-agent-dashboard
-
-# 2. Install dependencies
+git clone https://github.com/zhound420/mordecai-dashboard
+cd mordecai-dashboard
 npm install
-
-# 3. Configure your environment
 cp .env.example .env.local
-# Edit .env.local — set NEXT_PUBLIC_AGENT_NAME, OPENCLAW_GATEWAY_URL, etc.
-
-# 4. Build and run
+# edit .env.local
 npm run build && npm start
-# Dashboard available at http://localhost:3100
 ```
 
-For local development with hot-reload:
+Default port is **3100**.
+
+Dev mode:
 
 ```bash
 npm run dev
@@ -33,72 +39,107 @@ npm run dev
 
 ---
 
-## Environment Variables
+## Environment variables
 
-Copy `.env.example` to `.env.local` and set the following:
+Copy `.env.example` to `.env.local`.
 
-| Variable | Default | Description |
-|---|---|---|
-| `NEXT_PUBLIC_AGENT_NAME` | `Agent` | Agent name shown in sidebar, page title, and terminal prompt |
-| `NEXT_PUBLIC_AGENT_TAGLINE` | `Your AI assistant` | Tagline shown below the agent name in the sidebar |
-| `OPENCLAW_GATEWAY_URL` | `http://localhost:18789` | URL of the OpenClaw gateway (used by the `openclaw` CLI) |
-| `OPENCLAW_GATEWAY_TOKEN` | *(required)* | Auth token for the OpenClaw gateway |
+| Variable | Required | Description |
+|---|---:|---|
+| `NEXT_PUBLIC_AGENT_NAME` | no | Sidebar/title branding |
+| `NEXT_PUBLIC_AGENT_TAGLINE` | no | Subtitle/tagline |
+| `OPENCLAW_GATEWAY_URL` | yes | OpenClaw Gateway URL |
+| `OPENCLAW_GATEWAY_TOKEN` | yes | Gateway token |
+| `OPENCLAW_WORKSPACE` | no | Workspace root for memory/activity routes (default: `$HOME/.openclaw/workspace`) |
 
-> **Note:** `OPENCLAW_GATEWAY_URL` and `OPENCLAW_GATEWAY_TOKEN` are consumed by the `openclaw` CLI binary that must be on your `$PATH`. The dashboard shells out to `openclaw` for all live data — it does not call the gateway directly.
+> The dashboard shells out to `openclaw` CLI. It does not directly call the gateway API.
 
 ---
 
-## What It Monitors
+## Data sources by page
 
-| Page | Data Source |
+| Page | Source |
 |---|---|
-| **Overview** | `openclaw status --json`, `openclaw sessions list --json`, `openclaw cron list --json` |
-| **Activity** | `openclaw sessions list --json` + cron job history |
-| **Memory** | `openclaw status --json` (memory section) |
-| **Sub-Agents** | `openclaw status --json` (agents section) |
-| **System** | `openclaw status --json` + `openclaw cron list --json` |
+| Overview | `openclaw status --json`, sessions, cron |
+| Activity | sessions + cron + workspace memory files |
+| Memory | `MEMORY.md` + `memory/*.md` from workspace |
+| Agents | `openclaw status --json` + agent session metadata |
+| System | status + cron |
 
-All API routes cache responses for 30 seconds to avoid hammering the CLI.
-
----
-
-## Project Structure
-
-```
-app/
-  layout.tsx          # Root layout — reads NEXT_PUBLIC_AGENT_NAME/TAGLINE
-  page.tsx            # Overview dashboard
-  activity/           # Paginated activity log
-  memory/             # Memory file viewer
-  agents/             # Sub-agent cards + task timelines
-  system/             # Channels, cron jobs, system config
-  api/                # Server-side routes that shell out to openclaw CLI
-components/
-  sidebar.tsx         # Collapsible nav — shows agent name + tagline
-  top-status-bar.tsx  # Live heartbeat + channel status
-data/                 # Static fallback JSON (used when CLI is unavailable)
-```
+API routes use short in-process caching (~3s TTL) to avoid hammering CLI calls.
 
 ---
 
-## Customization
+## Make it easy for other agents to adapt
 
-- **Branding:** Set `NEXT_PUBLIC_AGENT_NAME` and `NEXT_PUBLIC_AGENT_TAGLINE` in `.env.local`
-- **Port:** Change the port in `package.json` scripts (`-p 3100`)
-- **Colors:** Edit `app/globals.css` — the design system uses oklch color variables
-- **Nav items:** Edit `components/sidebar.tsx` `navItems` array
+### 1) Branding
+Set in `.env.local`:
+
+```env
+NEXT_PUBLIC_AGENT_NAME=Octavius
+NEXT_PUBLIC_AGENT_TAGLINE=Sharp wit with a touch of humor
+```
+
+### 2) Theme tuning
+Edit `app/globals.css` tokens:
+
+- `:root` for light mode
+- `.dark` for dark mode
+- `--primary`, `--accent`, `--background`, `--card`, `--muted-foreground`
+
+### 3) Port
+Update `package.json` scripts (`-p 3100`) if needed.
+
+### 4) Workspace portability
+If your OpenClaw workspace is non-standard, set:
+
+```env
+OPENCLAW_WORKSPACE=/custom/path/to/.openclaw/workspace
+```
+
+---
+
+## Run as a reboot-persistent service (recommended)
+
+Create `~/.config/systemd/user/<agent>-dashboard.service`:
+
+```ini
+[Unit]
+Description=OpenClaw Agent Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/mordecai-dashboard
+Environment=NODE_ENV=production
+Environment=PATH=/home/YOUR_USER/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env npm start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now <agent>-dashboard.service
+systemctl --user status <agent>-dashboard.service
+```
 
 ---
 
 ## Requirements
 
 - Node.js 18+
-- `openclaw` CLI on your `$PATH` and authenticated
-- An OpenClaw gateway running and reachable
+- `openclaw` CLI installed and authenticated
+- OpenClaw gateway running/reachable
 
 ---
 
-## OpenClaw Docs
+## OpenClaw docs
 
-- [OpenClaw documentation](https://openclaw.dev/docs)
-- [CLI reference](https://openclaw.dev/docs/cli)
+- https://docs.openclaw.ai
+- https://github.com/openclaw/openclaw

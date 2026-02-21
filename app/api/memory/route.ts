@@ -3,8 +3,9 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import type { MemoryEntry } from '@/types'
 
-const MEMORY_DIR = '/Users/zohairf/clawd/memory'
-const MEMORY_MAIN = '/Users/zohairf/clawd/MEMORY.md'
+const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || `${process.env.HOME}/.openclaw/workspace`
+const MEMORY_DIR = `${WORKSPACE_DIR}/memory`
+const MEMORY_MAIN = `${WORKSPACE_DIR}/MEMORY.md`
 
 function extractTitle(content: string, filename: string): string {
   const h1 = content.match(/^# (.+)/m)

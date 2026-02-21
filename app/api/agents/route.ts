@@ -20,7 +20,7 @@ function runCLI(cmd: string): Record<string, unknown> | null {
 // Read session labels from agent session files
 function getSessionLabels(agentId: string): Record<string, { label?: string; spawnedBy?: string }> {
   try {
-    const homedir = process.env.HOME || '/Users/zohairf'
+    const homedir = process.env.HOME || '/home/zohair'
     const sessionsPath = join(homedir, '.openclaw', 'agents', agentId, 'sessions', 'sessions.json')
     const data = JSON.parse(readFileSync(sessionsPath, 'utf-8'))
     const labels: Record<string, { label?: string; spawnedBy?: string }> = {}

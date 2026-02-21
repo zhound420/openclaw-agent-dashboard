@@ -129,7 +129,8 @@ function getSessionActivity(): ActivityEntry[] {
 
   // 3. Read memory files for recent memory events
   try {
-    const memoryDir = '/Users/zohairf/clawd/memory'
+    const workspaceDir = process.env.OPENCLAW_WORKSPACE || `${process.env.HOME}/.openclaw/workspace`
+    const memoryDir = `${workspaceDir}/memory`
     const today = new Date().toISOString().slice(0, 10)
     const todayFile = join(memoryDir, `${today}.md`)
     if (existsSync(todayFile)) {

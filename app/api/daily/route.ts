@@ -3,7 +3,8 @@ import { readFileSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 import type { DailySummary } from '@/types'
 
-const MEMORY_DIR = '/Users/zohairf/clawd/memory'
+const WORKSPACE_DIR = process.env.OPENCLAW_WORKSPACE || `${process.env.HOME}/.openclaw/workspace`
+const MEMORY_DIR = `${WORKSPACE_DIR}/memory`
 
 function parseDailySummary(content: string, date: string): DailySummary {
   const lines = content.split('\n')
