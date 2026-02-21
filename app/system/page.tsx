@@ -3,12 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useTheme } from 'next-themes'
 import { PageHeader } from '@/components/page-header'
-import { StatusBadge } from '@/components/status-badge'
 import {
-  Cpu, Clock, Shield, Zap, Activity, Server, ChevronDown, ChevronRight,
-  Wifi, WifiOff, RotateCcw, CheckCircle, AlertTriangle, Timer
+  Cpu, Clock, Activity as ActivityIcon, Server, ChevronDown, ChevronRight,
+  CheckCircle, AlertTriangle, Timer
 } from 'lucide-react'
-import { formatDistanceToNow, format } from 'date-fns'
+import { formatDistanceToNow } from 'date-fns'
 import { cn } from '@/lib/utils'
 
 interface SystemData {
@@ -42,13 +41,21 @@ interface SystemData {
     enabled?: boolean
     consecutiveErrors?: number
   }>
-  tokenUsage: Array<{
-    date: string
-    input: number
-    output: number
-    total: number
-    cost: number
-  }>
+  tokenUsage: {
+    byModel: Array<{ model: string; input: number; output: number; total: number; sessions: number }>
+    totals: { input: number; output: number; total: number; sessions: number }
+  }
+  systemInfo: {
+    hostname: string
+    platform: string
+    arch: string
+    cpuModel: string
+    cores: number
+    totalRamGb: number
+    version: string
+    loadAvg: number[]
+    uptime: number
+  }
 }
 
 interface SystemStatus {
@@ -145,31 +152,10 @@ function HealthGauge({ health }: { health: string }) {
   )
 }
 
-function TokenSparkline({ data }: { data: SystemData['tokenUsage'] }) {
-  const max = Math.max(...data.map(d => d.total), 1)
-  return (
-    <div className="flex items-end gap-1 h-12">
-      {data.map((d, i) => {
-        const h = Math.max((d.total / max) * 100, 5)
-        const isToday = i === data.length - 1
-        return (
-          <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5">
-            <div
-              className="w-full rounded-sm transition-all"
-              style={{
-                height: `${h}%`,
-                background: isToday
-                  ? 'var(--primary)'
-                  : `color-mix(in oklch, var(--primary) ${Math.round((0.2 + (d.total / max) * 0.5) * 100)}%, transparent)`,
-                boxShadow: isToday ? '0 0 6px color-mix(in oklch, var(--primary) 50%, transparent)' : undefined,
-              }}
-              title={`${d.date}: ${(d.total / 1000).toFixed(0)}K tokens · $${d.cost}`}
-            />
-          </div>
-        )
-      })}
-    </div>
-  )
+function formatTokens(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return `${n}`
 }
 
 function ConfigTree({ config }: { config: SystemData['config'] }) {
@@ -253,14 +239,15 @@ export default function SystemPage() {
 
   useEffect(() => {
     async function fetchAll() {
-      try {
-        const [statusRes, systemRes] = await Promise.all([
-          fetch('/api/status').then(r => r.json()),
-          fetch('/api/system').then(r => r.json()),
-        ])
-        setStatus(statusRes.data)
-        setSystemData(systemRes.data)
-      } catch {}
+      fetch('/api/status')
+        .then(r => r.json())
+        .then(j => setStatus(j.data))
+        .catch(() => {})
+
+      fetch('/api/system')
+        .then(r => r.json())
+        .then(j => setSystemData(j.data))
+        .catch(() => {})
     }
     fetchAll()
     const interval = setInterval(fetchAll, 3000)
@@ -268,8 +255,6 @@ export default function SystemPage() {
   }, [])
 
   const isHealthy = status?.health === 'healthy'
-  const totalTokens7d = systemData?.tokenUsage.reduce((sum, d) => sum + d.total, 0) ?? 0
-  const totalCost7d = systemData?.tokenUsage.reduce((sum, d) => sum + d.cost, 0) ?? 0
 
   return (
     <div className="flex flex-col h-full">
@@ -298,17 +283,15 @@ export default function SystemPage() {
               color: 'text-primary',
             },
             {
-              label: 'RAM Used',
-              value: status
-                ? `${(status.memoryUsageMb / 1024).toFixed(1)} GB / ${(status.totalMemMb / 1024).toFixed(1)} GB`
-                : '—',
+              label: 'Gateway Mem',
+              value: status ? `${(status.memoryUsageMb / 1024).toFixed(2)} GB` : '—',
               icon: Server,
               color: 'text-blue-400',
             },
             {
-              label: 'Memory Index',
-              value: status ? `${status.memoryFiles ?? 0} files · ${status.memoryChunks ?? 0} chunks` : '—',
-              icon: Shield,
+              label: 'Load Average',
+              value: systemData?.systemInfo ? systemData.systemInfo.loadAvg[0].toFixed(2) : '—',
+              icon: ActivityIcon,
               color: 'text-amber-400',
             },
           ].map(({ label, value, icon: Icon, color }) => (
@@ -328,7 +311,7 @@ export default function SystemPage() {
         {/* Channels grid */}
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Wifi className="w-3.5 h-3.5" />
+            <ActivityIcon className="w-3.5 h-3.5" />
             Channels
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -424,36 +407,59 @@ export default function SystemPage() {
             </div>
           </div>
 
-          {/* Token usage + config */}
+          {/* System info + token usage by model + config */}
           <div className="space-y-3">
-            {/* Token usage chart */}
+            <div className="rounded-lg border border-border/60 p-4 bg-card">
+              <div className="flex items-center gap-2 mb-3">
+                <Cpu className="w-3.5 h-3.5 text-primary" />
+                <h3 className="text-xs font-semibold text-foreground">System Info</h3>
+              </div>
+              {systemData?.systemInfo ? (
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px] font-mono">
+                  <div className="text-muted-foreground">Hostname</div><div className="text-foreground truncate">{systemData.systemInfo.hostname}</div>
+                  <div className="text-muted-foreground">Platform</div><div className="text-foreground">{systemData.systemInfo.platform}</div>
+                  <div className="text-muted-foreground">Arch</div><div className="text-foreground">{systemData.systemInfo.arch}</div>
+                  <div className="text-muted-foreground">CPU</div><div className="text-foreground truncate">{systemData.systemInfo.cpuModel}</div>
+                  <div className="text-muted-foreground">Cores</div><div className="text-foreground">{systemData.systemInfo.cores}</div>
+                  <div className="text-muted-foreground">Total RAM</div><div className="text-foreground">{systemData.systemInfo.totalRamGb} GB</div>
+                  <div className="text-muted-foreground">Version</div><div className="text-foreground">v{systemData.systemInfo.version}</div>
+                  <div className="text-muted-foreground">Load Avg</div><div className="text-foreground">{systemData.systemInfo.loadAvg.join(' / ')}</div>
+                  <div className="text-muted-foreground">Uptime</div><div className="text-foreground">{formatUptime(systemData.systemInfo.uptime)}</div>
+                </div>
+              ) : <div className="text-xs text-muted-foreground">Loading...</div>}
+            </div>
+
             <div className="rounded-lg border border-border/60 p-4 bg-card">
               <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5 text-primary" />
-                  <h3 className="text-xs font-semibold text-foreground">Token Usage (7d)</h3>
-                </div>
-                <div className="text-right">
-                  <div className="text-[11px] font-mono text-foreground">{(totalTokens7d / 1000).toFixed(0)}K total</div>
-                  <div className="text-[10px] text-muted-foreground">${totalCost7d.toFixed(2)} cost</div>
+                <h3 className="text-xs font-semibold text-foreground">Token Usage by Model</h3>
+                <div className="text-[11px] font-mono text-muted-foreground">
+                  {systemData?.tokenUsage ? `${formatTokens(systemData.tokenUsage.totals.total)} total` : '—'}
                 </div>
               </div>
-              {systemData?.tokenUsage && <TokenSparkline data={systemData.tokenUsage} />}
-              <div className="flex justify-between mt-2">
-                {systemData?.tokenUsage.map((d, i) => (
-                  <div key={d.date} className="flex-1 text-center">
-                    <div className="text-[9px] text-muted-foreground/50">
-                      {i === systemData.tokenUsage.length - 1 ? 'today' : format(new Date(d.date), 'EEE').toLowerCase()}
+              <div className="space-y-2">
+                {(systemData?.tokenUsage.byModel ?? []).slice(0, 8).map((m) => {
+                  const max = Math.max(...(systemData?.tokenUsage.byModel ?? []).map(x => x.total), 1)
+                  const pct = Math.max(6, Math.round((m.total / max) * 100))
+                  return (
+                    <div key={m.model}>
+                      <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+                        <span className="text-foreground truncate max-w-[55%]">{m.model}</span>
+                        <span className="text-muted-foreground">{formatTokens(m.total)} · {m.sessions} sess</span>
+                      </div>
+                      <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--primary)' }} />
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono mt-0.5">in {formatTokens(m.input)} · out {formatTokens(m.output)}</div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
+                {(systemData?.tokenUsage.byModel ?? []).length === 0 && <div className="text-xs text-muted-foreground">No session token data yet.</div>}
               </div>
             </div>
 
-            {/* Config tree */}
             <div className="rounded-lg border border-border/60 bg-card">
               <div className="px-4 py-3 border-b border-border/50 flex items-center gap-2">
-                <Activity className="w-3.5 h-3.5 text-muted-foreground" />
+                <ActivityIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 <h3 className="text-xs font-semibold text-foreground">Configuration</h3>
               </div>
               <div className="p-3">

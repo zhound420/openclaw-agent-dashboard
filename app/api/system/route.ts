@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { execSync } from 'child_process'
+import os from 'os'
 
 let cache: { data: object; ts: number } | null = null
 const CACHE_TTL = 3_000
@@ -17,10 +18,9 @@ function runCLI(cmd: string): Record<string, unknown> | null {
 
 function buildSystemData(
   statusData: Record<string, unknown> | null,
-  cronData: Record<string, unknown> | null
+  cronData: Record<string, unknown> | null,
+  sessionsData: Record<string, unknown> | null
 ) {
-  // --- Channels from channelSummary ---
-  // Format: "Telegram: configured", "  - default (token:config)", "Discord: configured", ...
   const channelSummary = (statusData?.channelSummary ?? []) as string[]
   const channels: Array<{
     channel: string
@@ -53,7 +53,6 @@ function buildSystemData(
     }
   }
 
-  // --- Cron Jobs ---
   const cronJobs = ((cronData?.jobs ?? []) as Array<{
     id: string
     name: string
@@ -85,14 +84,13 @@ function buildSystemData(
       lastRun,
       nextRun,
       lastStatus,
-      totalRuns: 0, // not available from basic CLI output
+      totalRuns: 0,
       successRate: state.consecutiveErrors === 0 ? 100 : Math.max(0, 100 - (state.consecutiveErrors ?? 0) * 20),
       enabled: job.enabled,
       consecutiveErrors: state.consecutiveErrors ?? 0,
     }
   })
 
-  // --- Heartbeat as a synthetic "cron job" ---
   const heartbeat = (statusData?.heartbeat ?? {}) as Record<string, unknown>
   const heartbeatAgents = (heartbeat.agents ?? []) as Array<{
     agentId: string; enabled: boolean; every: string; everyMs: number | null
@@ -116,7 +114,6 @@ function buildSystemData(
     }
   })
 
-  // --- Config (non-sensitive overview) ---
   const gateway = (statusData?.gateway ?? {}) as Record<string, unknown>
   const gatewaySelf = (gateway.self ?? {}) as Record<string, string>
   const update = (statusData?.update ?? {}) as Record<string, unknown>
@@ -124,8 +121,6 @@ function buildSystemData(
   const memData = (statusData?.memory ?? {}) as Record<string, unknown>
   const agentsData = (statusData?.agents ?? {}) as Record<string, unknown>
   const agentsList = (agentsData.agents ?? []) as Array<{ id: string }>
-  const sessions = (statusData?.sessions ?? {}) as Record<string, unknown>
-  const sessionsDefaults = (sessions.defaults ?? {}) as Record<string, unknown>
 
   const config = {
     agentName: gatewaySelf.host ?? process.env.NEXT_PUBLIC_AGENT_NAME ?? 'Agent',
@@ -144,10 +139,59 @@ function buildSystemData(
     },
   }
 
-  // Token usage: not available from CLI, return empty array
-  const tokenUsage: Array<{ date: string; input: number; output: number; total: number; cost: number }> = []
+  const sessionsList = (sessionsData?.sessions ?? []) as Array<{
+    model?: string
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+  }>
 
-  return { config, channels, cronJobs, tokenUsage }
+  const byModelMap = new Map<string, { model: string; input: number; output: number; total: number; sessions: number }>()
+  let totalInput = 0
+  let totalOutput = 0
+
+  for (const s of sessionsList) {
+    const model = s.model ?? 'unknown'
+    const input = s.inputTokens ?? 0
+    const output = s.outputTokens ?? 0
+    const total = s.totalTokens ?? (input + output)
+
+    totalInput += input
+    totalOutput += output
+
+    const prev = byModelMap.get(model) ?? { model, input: 0, output: 0, total: 0, sessions: 0 }
+    prev.input += input
+    prev.output += output
+    prev.total += total
+    prev.sessions += 1
+    byModelMap.set(model, prev)
+  }
+
+  const byModel = [...byModelMap.values()].sort((a, b) => b.total - a.total)
+  const tokenUsage = {
+    byModel,
+    totals: {
+      input: totalInput,
+      output: totalOutput,
+      total: totalInput + totalOutput,
+      sessions: sessionsList.length,
+    },
+  }
+
+  const cpus = os.cpus()
+  const systemInfo = {
+    hostname: os.hostname(),
+    platform: os.platform(),
+    arch: os.arch(),
+    cpuModel: cpus[0]?.model ?? 'unknown',
+    cores: cpus.length,
+    totalRamGb: +(os.totalmem() / 1024 / 1024 / 1024).toFixed(1),
+    version: gatewaySelf.version ?? registry.latestVersion ?? '—',
+    loadAvg: os.loadavg().map(v => +v.toFixed(2)),
+    uptime: os.uptime(),
+  }
+
+  return { config, channels, cronJobs, tokenUsage, systemInfo }
 }
 
 export async function GET() {
@@ -157,12 +201,11 @@ export async function GET() {
   }
 
   try {
-    const [statusData, cronData] = await Promise.all([
-      Promise.resolve(runCLI('openclaw status --json')),
-      Promise.resolve(runCLI('openclaw cron list --json')),
-    ])
+    const statusData = runCLI('openclaw status --json')
+    const cronData = runCLI('openclaw cron list --json')
+    const sessionsData = runCLI('openclaw sessions --json')
 
-    const data = buildSystemData(statusData, cronData)
+    const data = buildSystemData(statusData, cronData, sessionsData)
     cache = { data, ts: now }
     return NextResponse.json({ data, timestamp: new Date().toISOString() })
   } catch {

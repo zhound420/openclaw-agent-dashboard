@@ -29,6 +29,19 @@ function parseChannelSummary(channelSummary: string[]): string[] {
     .map(line => line.split(':')[0].trim().toLowerCase())
 }
 
+function getGatewayRssMb(): number {
+  try {
+    const pidOut = execSync("pgrep -f 'openclaw.*gateway' | head -n1", { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    if (!pidOut) throw new Error('no gateway pid')
+    const rssKbOut = execSync(`ps -o rss= -p ${pidOut}`, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const rssKb = Number.parseInt(rssKbOut, 10)
+    if (Number.isFinite(rssKb) && rssKb > 0) return Math.round(rssKb / 1024)
+  } catch {
+    // fallback below
+  }
+  return Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+}
+
 function buildStatus(statusData: Record<string, unknown> | null) {
   const gateway = (statusData?.gateway ?? {}) as Record<string, unknown>
   const gatewaySelf = (gateway.self ?? {}) as Record<string, unknown>
@@ -64,10 +77,9 @@ function buildStatus(statusData: Record<string, unknown> | null) {
   // Uptime: system uptime (host), not dashboard process uptime
   const uptimeSecs = Math.floor(os.uptime())
 
-  // Memory: from OS
+  // Memory: gateway RSS (MB), fallback to process heap if gateway PID not found
   const totalMem = os.totalmem()
-  const freeMem = os.freemem()
-  const usedMemMb = Math.round((totalMem - freeMem) / 1024 / 1024)
+  const usedMemMb = getGatewayRssMb()
 
   // CPU: use os.loadavg 1-minute as % (rough proxy)
   const loadAvg1 = os.loadavg()[0]
