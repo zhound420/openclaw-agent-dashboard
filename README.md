@@ -4,6 +4,10 @@ A reusable monitoring dashboard for OpenClaw agents: sessions, activity, memory,
 
 Built with Next.js 16, React 19, Tailwind v4, and shadcn/ui.
 
+## Screenshot
+
+![OpenClaw Agent Dashboard overview](docs/dashboard-overview.jpg)
+
 ---
 
 ## What’s improved in this version

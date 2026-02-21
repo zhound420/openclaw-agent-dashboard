@@ -58,6 +58,9 @@ interface SystemStatus {
   lastHeartbeat: string
   health: string
   memoryUsageMb: number
+  totalMemMb: number
+  memoryFiles: number
+  memoryChunks: number
   cpuPercent: number
 }
 
@@ -289,20 +292,22 @@ export default function SystemPage() {
 
           {[
             {
-              label: 'Uptime',
+              label: 'System Uptime',
               value: status ? formatUptime(status.uptime) : '—',
               icon: Clock,
               color: 'text-primary',
             },
             {
-              label: 'Memory',
-              value: `${status?.memoryUsageMb ?? 0} MB`,
+              label: 'RAM Used',
+              value: status
+                ? `${(status.memoryUsageMb / 1024).toFixed(1)} GB / ${(status.totalMemMb / 1024).toFixed(1)} GB`
+                : '—',
               icon: Server,
               color: 'text-blue-400',
             },
             {
-              label: 'Version',
-              value: `v${status?.version ?? '—'}`,
+              label: 'Memory Index',
+              value: status ? `${status.memoryFiles ?? 0} files · ${status.memoryChunks ?? 0} chunks` : '—',
               icon: Shield,
               color: 'text-amber-400',
             },

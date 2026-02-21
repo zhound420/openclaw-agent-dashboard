@@ -84,7 +84,7 @@ export default function HomePage() {
   const registry = (update.registry ?? {}) as Record<string, string>
 
   const version = registry.latestVersion ?? gatewaySelf.version ?? '—'
-  const uptimeSecs = Math.floor(process.uptime())
+  const uptimeSecs = Math.floor(os.uptime())
 
   // Memory from OS
   const totalMem = os.totalmem()

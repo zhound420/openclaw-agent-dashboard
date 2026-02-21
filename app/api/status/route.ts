@@ -61,8 +61,8 @@ function buildStatus(statusData: Record<string, unknown> | null) {
     health = 'degraded'
   }
 
-  // Uptime: use process uptime as proxy
-  const uptimeSecs = Math.floor(process.uptime())
+  // Uptime: system uptime (host), not dashboard process uptime
+  const uptimeSecs = Math.floor(os.uptime())
 
   // Memory: from OS
   const totalMem = os.totalmem()
